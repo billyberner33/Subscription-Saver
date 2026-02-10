@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Subscription Save Offer Agent</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <h1>Subscription Save Offer Agent</h1>
+        <p class="subhead">
+          Agentic prototype: chooses the <span class="emph">smallest effective</span> save offer with explainable tradeoffs.
+          Data + impact simulation are mocked; the OpenAI decision is real when an API key is configured.
+        </p>
+      </header>
+
+      <section class="panel">
+        <h2>Scenario</h2>
+        <div class="row">
+          <label>
+            Customer
+            <select id="customerId">
+              {% for c in customers %}
+              <option value="{{ c.customer_id }}">{{ c.customer_id }} — {{ c.name }} ({{ c.segment }})</option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <label>
+            Cancellation reason
+            <select id="reason">
+              {% for r in reasons %}
+              <option value="{{ r[0] }}">{{ r[1] }}</option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <button id="runBtn" class="primary">Recommend offer</button>
+        </div>
+        <p class="hint">
+          Tip: try <code>cust_1001</code> + “Not using it enough” (pause), or <code>cust_1002</code> + “Too expensive” (discount).
+        </p>
+      </section>
+
+      <section class="grid">
+        <div class="panel">
+          <h2>Recommendation</h2>
+          <div id="recStatus" class="muted">Run the agent to see a decision.</div>
+          <div id="rec" class="card hidden"></div>
+          <div class="actions hidden" id="applyWrap">
+            <button id="applyBtn">Apply offer (mock)</button>
+            <span id="applyResult" class="muted"></span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Audit log</h2>
+          <div class="muted">
+            Tool calls + mocked system data used by the agent (helps demonstrate “agentic execution”).
+          </div>
+          <pre id="audit" class="pre">[]</pre>
+        </div>
+      </section>
+
+      <footer class="footer muted">
+        Built for a Commerce PM interview assignment (Option 2).
+      </footer>
+    </main>
+
+    <script>
+      const el = (id) => document.getElementById(id);
+      const state = { lastDecision: null };
+
+      function setLoading(isLoading) {
+        el("runBtn").disabled = isLoading;
+        el("runBtn").textContent = isLoading ? "Thinking…" : "Recommend offer";
+      }
+
+      function renderDecision(decision) {
+        const offerId = decision.selected_offer_id ?? "(missing)";
+        const outcomes = decision.expected_outcomes ?? {};
+        const tradeoffs = (decision.tradeoffs ?? []).map((t) => `<li>${escapeHtml(t)}</li>`).join("");
+        const alts = (decision.alternatives_considered ?? []).map((t) => `<li>${escapeHtml(t)}</li>`).join("");
+        const risks = (decision.risk_flags ?? []).map((t) => `<li>${escapeHtml(t)}</li>`).join("");
+
+        el("rec").innerHTML = `
+          <div class="kvs">
+            <div><div class="k">Selected offer</div><div class="v"><code>${escapeHtml(offerId)}</code></div></div>
+            <div><div class="k">Confidence</div><div class="v">${escapeHtml(decision.confidence ?? "")}</div></div>
+            <div><div class="k">Retention uplift</div><div class="v">${escapeHtml(String(outcomes.retention_uplift ?? ""))}</div></div>
+            <div><div class="k">Margin impact</div><div class="v">${escapeHtml(String(outcomes.margin_impact ?? ""))}</div></div>
+            <div><div class="k">Predicted churn risk</div><div class="v">${escapeHtml(String(outcomes.predicted_churn_risk ?? ""))}</div></div>
+          </div>
+          <hr />
+          <h3>Why this offer</h3>
+          <p>${escapeHtml(decision.why_this_offer ?? "")}</p>
+          <h3>Customer message</h3>
+          <p class="quote">${escapeHtml(decision.customer_message ?? "")}</p>
+          <details open>
+            <summary>Tradeoffs</summary>
+            <ul>${tradeoffs || "<li class='muted'>None provided</li>"}</ul>
+          </details>
+          <details>
+            <summary>Alternatives considered</summary>
+            <ul>${alts || "<li class='muted'>None provided</li>"}</ul>
+          </details>
+          <details>
+            <summary>Risk flags</summary>
+            <ul>${risks || "<li class='muted'>None provided</li>"}</ul>
+          </details>
+          <details>
+            <summary>Agent notes (internal)</summary>
+            <p class="muted">${escapeHtml(decision.agent_notes ?? "")}</p>
+          </details>
+        `;
+        el("rec").classList.remove("hidden");
+        el("applyWrap").classList.remove("hidden");
+      }
+
+      function escapeHtml(s) {
+        return String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+      }
+
+      el("runBtn").addEventListener("click", async () => {
+        setLoading(true);
+        el("recStatus").textContent = "Running agent…";
+        el("applyResult").textContent = "";
+        el("rec").classList.add("hidden");
+        el("applyWrap").classList.add("hidden");
+
+        const customer_id = el("customerId").value;
+        const cancellation_reason = el("reason").value;
+        const res = await fetch("/api/recommend", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customer_id, cancellation_reason }),
+        });
+        const payload = await res.json();
+        el("audit").textContent = JSON.stringify(payload.audit_log ?? [], null, 2);
+
+        if (payload.status === "missing_api_key") {
+          el("recStatus").textContent = "Missing OPENAI_API_KEY. Set it in .env and restart the server.";
+          setLoading(false);
+          return;
+        }
+        if (payload.status !== "ok" || !payload.decision) {
+          el("recStatus").textContent = payload.error ? `Error: ${payload.error}` : "No decision returned.";
+          setLoading(false);
+          return;
+        }
+
+        state.lastDecision = payload.decision;
+        el("recStatus").textContent = "";
+        renderDecision(payload.decision);
+        setLoading(false);
+      });
+
+      el("applyBtn").addEventListener("click", async () => {
+        if (!state.lastDecision) return;
+        const customer_id = el("customerId").value;
+        const selected_offer_id = state.lastDecision.selected_offer_id;
+        el("applyBtn").disabled = true;
+        const res = await fetch("/api/apply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customer_id, selected_offer_id }),
+        });
+        const payload = await res.json();
+        el("applyResult").textContent = payload.ok ? "Applied (mock) ✓" : "Failed to apply";
+        el("applyBtn").disabled = false;
+      });
+    </script>
+  </body>
+</html>
+
