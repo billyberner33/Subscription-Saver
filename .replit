@@ -1,4 +1,4 @@
-run = "bash -lc 'test -d .venv || python -m venv .venv && source .venv/bin/activate && python -c \"import fastapi\" 2>/dev/null || pip install -r requirements.txt && python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'"
+run = "bash -lc 'test -d .venv || python -m venv .venv; source .venv/bin/activate; python -m pip install -U pip setuptools wheel >/dev/null 2>&1 || true; python -c \"import fastapi\" 2>/dev/null || pip install -r requirements.txt; python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-3000}'"
 
 [env]
 OPENAI_MODEL = "o4-mini"
