@@ -56,10 +56,15 @@
         </div>
 
         <div class="panel">
-          <h2>Audit log</h2>
-          <div class="muted">
-            Tool calls + mocked system data used by the agent (helps demonstrate “agentic execution”).
-          </div>
+          <h2>Customer context</h2>
+          <div class="muted">Loyalty + cancellation history used by the agent.</div>
+          <div id="loyalty" class="card hidden"></div>
+          <details class="details">
+            <summary>Cancellation events (latest)</summary>
+            <pre id="cancellations" class="pre small">[]</pre>
+          </details>
+          <h2 class="mt">Audit log</h2>
+          <div class="muted">Tool calls + mocked system data used by the agent.</div>
           <pre id="audit" class="pre">[]</pre>
         </div>
       </section>
@@ -73,6 +78,50 @@
       const el = (id) => document.getElementById(id);
       const state = { lastDecision: null };
 
+      async function loadCustomerContext() {
+        const customer_id = el("customerId").value;
+        const reason = el("reason").value;
+        const res = await fetch(
+          `/api/customer/${encodeURIComponent(customer_id)}/loyalty?cancellation_reason=${encodeURIComponent(reason)}`
+        );
+        const payload = await res.json();
+        if (!res.ok) {
+          el("loyalty").classList.add("hidden");
+          el("cancellations").textContent = "[]";
+          return;
+        }
+
+        const l = payload.loyalty ?? {};
+        const unsub = payload.unsubscribe_estimate ?? {};
+        const reasons = l.cancellation_reason_history ?? {};
+        const reasonPairs = Object.entries(reasons)
+          .sort((a, b) => b[1] - a[1])
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(", ");
+
+        const unsubPct = unsub.unsubscribe_risk != null ? Math.round(Number(unsub.unsubscribe_risk) * 100) : null;
+        const drivers = (unsub.drivers ?? []).slice(0, 5).join(", ");
+
+        el("loyalty").innerHTML = `
+          <div class="kvs">
+            <div><div class="k">Tenure (months)</div><div class="v">${escapeHtml(l.tenure_months ?? "")}</div></div>
+            <div><div class="k">Total spend (USD)</div><div class="v">$${escapeHtml(Number(l.total_spend_usd ?? 0).toFixed(2))}</div></div>
+            <div><div class="k">Avg daily minutes</div><div class="v">${escapeHtml(l.avg_daily_minutes ?? "")}</div></div>
+            <div><div class="k">Avg weekly sessions</div><div class="v">${escapeHtml(l.avg_weekly_sessions ?? "")}</div></div>
+            <div><div class="k">NPS</div><div class="v">${escapeHtml(l.nps ?? "")}</div></div>
+            <div><div class="k">Cancel attempts (12m)</div><div class="v">${escapeHtml(l.cancellation_attempts_12m ?? "")}</div></div>
+            <div><div class="k">Last cancel attempt</div><div class="v">${escapeHtml(l.last_cancellation_attempt_date ?? "—")}</div></div>
+            <div><div class="k">Cancel reasons</div><div class="v">${escapeHtml(reasonPairs || "—")}</div></div>
+            <div><div class="k">Discount sensitivity</div><div class="v">${escapeHtml(l.discount_sensitivity ?? "")}</div></div>
+            <div><div class="k">Loyalty score</div><div class="v">${escapeHtml(l.loyalty_score ?? "")}</div></div>
+            <div><div class="k">Unsubscribe likelihood</div><div class="v">${unsubPct == null ? "—" : `${unsubPct}% (${escapeHtml(unsub.bucket ?? "")})`}</div></div>
+            <div><div class="k">Top drivers</div><div class="v">${escapeHtml(drivers || "—")}</div></div>
+          </div>
+        `;
+        el("loyalty").classList.remove("hidden");
+        el("cancellations").textContent = JSON.stringify(payload.cancellation_events ?? [], null, 2);
+      }
+
       function setLoading(isLoading) {
         el("runBtn").disabled = isLoading;
         el("runBtn").textContent = isLoading ? "Thinking…" : "Recommend offer";
@@ -80,15 +129,20 @@
 
       function renderDecision(decision) {
         const offerId = decision.selected_offer_id ?? "(missing)";
+        const isCustomDiscount = offerId === "offer_custom_discount";
         const outcomes = decision.expected_outcomes ?? {};
         const tradeoffs = (decision.tradeoffs ?? []).map((t) => `<li>${escapeHtml(t)}</li>`).join("");
         const alts = (decision.alternatives_considered ?? []).map((t) => `<li>${escapeHtml(t)}</li>`).join("");
         const risks = (decision.risk_flags ?? []).map((t) => `<li>${escapeHtml(t)}</li>`).join("");
+        const discountLine = isCustomDiscount
+          ? `<div><div class="k">Discount</div><div class="v">${escapeHtml(String(decision.discount_percent ?? ""))}% for ${escapeHtml(String(decision.discount_duration_months ?? ""))} mo</div></div>`
+          : "";
 
         el("rec").innerHTML = `
           <div class="kvs">
             <div><div class="k">Selected offer</div><div class="v"><code>${escapeHtml(offerId)}</code></div></div>
             <div><div class="k">Confidence</div><div class="v">${escapeHtml(decision.confidence ?? "")}</div></div>
+            ${discountLine}
             <div><div class="k">Retention uplift</div><div class="v">${escapeHtml(String(outcomes.retention_uplift ?? ""))}</div></div>
             <div><div class="k">Margin impact</div><div class="v">${escapeHtml(String(outcomes.margin_impact ?? ""))}</div></div>
             <div><div class="k">Predicted churn risk</div><div class="v">${escapeHtml(String(outcomes.predicted_churn_risk ?? ""))}</div></div>
@@ -132,6 +186,7 @@
 
         const customer_id = el("customerId").value;
         const cancellation_reason = el("reason").value;
+        await loadCustomerContext();
         const res = await fetch("/api/recommend", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -162,16 +217,24 @@
         const customer_id = el("customerId").value;
         const selected_offer_id = state.lastDecision.selected_offer_id;
         el("applyBtn").disabled = true;
+        const applyPayload = { customer_id, selected_offer_id };
+        if (selected_offer_id === "offer_custom_discount") {
+          applyPayload.discount_percent = state.lastDecision.discount_percent;
+          applyPayload.discount_duration_months = state.lastDecision.discount_duration_months;
+        }
         const res = await fetch("/api/apply", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ customer_id, selected_offer_id }),
+          body: JSON.stringify(applyPayload),
         });
-        const payload = await res.json();
-        el("applyResult").textContent = payload.ok ? "Applied (mock) ✓" : "Failed to apply";
+        const applyResult = await res.json();
+        el("applyResult").textContent = applyResult.ok ? "Applied (mock) ✓" : "Failed to apply";
         el("applyBtn").disabled = false;
       });
+
+      el("customerId").addEventListener("change", () => loadCustomerContext());
+      el("reason").addEventListener("change", () => loadCustomerContext());
+      loadCustomerContext();
     </script>
   </body>
 </html>
-

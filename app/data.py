@@ -117,7 +117,7 @@ def demo_subscriptions(today: date) -> list[Subscription]:
             plan="team",
             cadence="annual",
             price_usd=2400.0,
-            renewal_date=today.replace(month=today.month, day=min(today.day, 28)),
+            renewal_date=today.replace(day=min(today.day, 28)),
             seats=10,
             status="active",
         ),
@@ -203,6 +203,13 @@ def offer_catalog() -> list[dict[str, Any]]:
             "cost": {"discount_percent": 30, "duration_months": 2},
         },
         {
+            "offer_id": "offer_custom_discount",
+            "type": "custom_discount",
+            "label": "Custom discount (agent sized)",
+            "constraints": {"min_tenure_months": 1, "max_payment_risk": "medium"},
+            "cost": {"discount_percent": None, "duration_months": None},
+        },
+        {
             "offer_id": "offer_switch_annual_15pct",
             "type": "cadence_change",
             "label": "Switch to annual (15% off)",
@@ -246,6 +253,8 @@ def simulate_impact(
     usage: Usage,
     cancellation_reason: CancellationReason,
     offer_id: str,
+    discount_percent: int | None = None,
+    duration_months: int | None = None,
 ) -> dict[str, Any]:
     # Heuristic simulator: returns directional metrics that the agent can use for tradeoffs.
     # These are mocked numbers; the prototype UI surfaces them as such.
@@ -271,8 +280,13 @@ def simulate_impact(
     if t == "pause":
         uplift = 0.10 if cancellation_reason in ("temporary_need", "not_using") else 0.05
         margin_impact = -0.01
-    elif t == "discount":
-        discount = float(offer["cost"]["discount_percent"]) / 100.0
+    elif t in ("discount", "custom_discount"):
+        if t == "custom_discount":
+            if discount_percent is None or duration_months is None:
+                return {"error": "missing_discount_params"}
+            discount = max(0.0, min(0.95, float(discount_percent) / 100.0))
+        else:
+            discount = float(offer["cost"]["discount_percent"]) / 100.0
         uplift = 0.18 if cancellation_reason == "too_expensive" else 0.08
         margin_impact = -min(0.25, discount * 0.9)
     elif t == "cadence_change":
@@ -291,4 +305,3 @@ def simulate_impact(
         "margin_impact": round(margin_impact, 2),
         "notes": "Mocked heuristics for prototype (replace with real models/experiments).",
     }
-

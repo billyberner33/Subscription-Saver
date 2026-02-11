@@ -51,6 +51,7 @@ body {
 }
 .panel h2 { margin: 0 0 10px; font-size: 16px; letter-spacing: 0.01em; }
 .panel h3 { margin: 14px 0 8px; font-size: 14px; }
+.mt { margin-top: 16px !important; }
 
 .row {
   display: grid;
@@ -103,6 +104,9 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   font-size: 12px;
   line-height: 1.45;
 }
+.pre.small { max-height: 220px; }
+
+.details { margin-top: 10px; }
 
 .kvs {
   display: grid;
@@ -134,4 +138,3 @@ summary { cursor: pointer; color: var(--text); }
 ul { margin: 8px 0 0 18px; color: var(--muted); }
 
 .footer { margin-top: 16px; font-size: 12px; }
-

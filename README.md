@@ -9,6 +9,7 @@ Agentic prototype for a **subscription cancellation save flow** (Option 2: build
 - **Agentic reasoning with tools:** the model gathers context via tool calls (customer, subscription, usage, eligible offers, impact simulation).
 - **Decision-making:** chooses an offer with explicit tradeoffs + alternatives.
 - **Working prototype:** simple web UI + JSON API; mock data is clearly labeled.
+- **Mock “database”:** lightweight SQLite file seeded on startup with customer + loyalty metrics.
 
 ## Run locally
 1) Create a venv and install deps:
@@ -46,4 +47,4 @@ Yes—import the code into Replit.
 
 ## Mock vs real
 - **Real:** OpenAI model call (when `OPENAI_API_KEY` is set).
-- **Mocked:** customer/subscription/usage data, offer catalog, and impact simulation (clearly shown in the UI “Audit log”).
+- **Mocked:** SQLite “customer database” (`mock_commerce.db`), offer catalog, and impact simulation (clearly shown in the UI “Audit log”).
