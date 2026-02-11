@@ -143,14 +143,10 @@ def seed_demo_data(*, today: date) -> None:
         row["loyalty_score"] = compute_loyalty_score(row)
 
     with _connect() as conn:
-        existing = conn.execute("SELECT COUNT(*) AS c FROM customers").fetchone()["c"]
-        if existing:
-            return
-
         for c in customers:
             conn.execute(
                 """
-                INSERT INTO customers (customer_id, name, segment, country, lifetime_value_usd, payment_risk)
+                INSERT OR IGNORE INTO customers (customer_id, name, segment, country, lifetime_value_usd, payment_risk)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -166,7 +162,7 @@ def seed_demo_data(*, today: date) -> None:
         for s in subs:
             conn.execute(
                 """
-                INSERT INTO subscriptions (subscription_id, customer_id, plan, cadence, price_usd, renewal_date, seats, status)
+                INSERT OR IGNORE INTO subscriptions (subscription_id, customer_id, plan, cadence, price_usd, renewal_date, seats, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -184,7 +180,7 @@ def seed_demo_data(*, today: date) -> None:
         for u in usage:
             conn.execute(
                 """
-                INSERT INTO usage (customer_id, last_30d_active_days, last_30d_key_actions, last_30d_value_score, primary_feature, support_tickets_90d)
+                INSERT OR IGNORE INTO usage (customer_id, last_30d_active_days, last_30d_key_actions, last_30d_value_score, primary_feature, support_tickets_90d)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -200,7 +196,7 @@ def seed_demo_data(*, today: date) -> None:
         for customer_id, row in loyalty_rows.items():
             conn.execute(
                 """
-                INSERT INTO loyalty (
+                INSERT OR IGNORE INTO loyalty (
                   customer_id,
                   tenure_months,
                   avg_daily_minutes,
@@ -228,44 +224,47 @@ def seed_demo_data(*, today: date) -> None:
                 ),
             )
 
-        cancellation_events = [
-            {
-                "customer_id": "cust_1001",
-                "event_date": today.replace(day=max(1, min(28, today.day - 12))).isoformat(),
-                "reason": "not_using",
-                "outcome": "saved",
-                "note": "Offered 1-month pause; customer agreed to try again.",
-            },
-            {
-                "customer_id": "cust_1003",
-                "event_date": today.replace(day=max(1, min(28, today.day - 40))).isoformat(),
-                "reason": "too_expensive",
-                "outcome": "saved",
-                "note": "Moved to annual with 15% discount after value review.",
-            },
-            {
-                "customer_id": "cust_1004",
-                "event_date": today.replace(day=max(1, min(28, today.day - 18))).isoformat(),
-                "reason": "bug_or_quality",
-                "outcome": "aborted",
-                "note": "Customer left before resolution; follow-up recommended.",
-            },
-            {
-                "customer_id": "cust_1004",
-                "event_date": today.replace(day=max(1, min(28, today.day - 4))).isoformat(),
-                "reason": "too_expensive",
-                "outcome": "saved",
-                "note": "Agent offered downgrade; customer stayed for now.",
-            },
-        ]
-        for ev in cancellation_events:
-            conn.execute(
-                """
-                INSERT INTO cancellation_events (customer_id, event_date, reason, outcome, note)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (ev["customer_id"], ev["event_date"], ev["reason"], ev["outcome"], ev.get("note")),
-            )
+        customers_count = int(conn.execute("SELECT COUNT(*) AS c FROM customers").fetchone()["c"])
+        events_count = int(conn.execute("SELECT COUNT(*) AS c FROM cancellation_events").fetchone()["c"])
+        if customers_count > 0 and events_count == 0:
+            cancellation_events = [
+                {
+                    "customer_id": "cust_1001",
+                    "event_date": today.replace(day=max(1, min(28, today.day - 12))).isoformat(),
+                    "reason": "not_using",
+                    "outcome": "saved",
+                    "note": "Offered 1-month pause; customer agreed to try again.",
+                },
+                {
+                    "customer_id": "cust_1003",
+                    "event_date": today.replace(day=max(1, min(28, today.day - 40))).isoformat(),
+                    "reason": "too_expensive",
+                    "outcome": "saved",
+                    "note": "Moved to annual with 15% discount after value review.",
+                },
+                {
+                    "customer_id": "cust_1004",
+                    "event_date": today.replace(day=max(1, min(28, today.day - 18))).isoformat(),
+                    "reason": "bug_or_quality",
+                    "outcome": "aborted",
+                    "note": "Customer left before resolution; follow-up recommended.",
+                },
+                {
+                    "customer_id": "cust_1004",
+                    "event_date": today.replace(day=max(1, min(28, today.day - 4))).isoformat(),
+                    "reason": "too_expensive",
+                    "outcome": "saved",
+                    "note": "Agent offered downgrade; customer stayed for now.",
+                },
+            ]
+            for ev in cancellation_events:
+                conn.execute(
+                    """
+                    INSERT INTO cancellation_events (customer_id, event_date, reason, outcome, note)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (ev["customer_id"], ev["event_date"], ev["reason"], ev["outcome"], ev.get("note")),
+                )
 
 
 def compute_loyalty_score(row: dict[str, Any]) -> int:
@@ -502,7 +501,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
                     (amt, cid),
                 )
 
-    # Ensure cancellation_events table exists and has at least a little demo data.
+    # Ensure cancellation_events table exists.
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS cancellation_events (
@@ -516,20 +515,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
         """
     )
-    existing_events = conn.execute("SELECT COUNT(*) AS c FROM cancellation_events").fetchone()["c"]
-    if int(existing_events) == 0:
-        today = date.today()
-        demo_events = [
-            ("cust_1001", today.replace(day=max(1, min(28, today.day - 12))).isoformat(), "not_using", "saved", None),
-            ("cust_1003", today.replace(day=max(1, min(28, today.day - 40))).isoformat(), "too_expensive", "saved", None),
-            ("cust_1004", today.replace(day=max(1, min(28, today.day - 18))).isoformat(), "bug_or_quality", "aborted", None),
-            ("cust_1004", today.replace(day=max(1, min(28, today.day - 4))).isoformat(), "too_expensive", "saved", None),
-        ]
-        for ev in demo_events:
-            conn.execute(
-                "INSERT INTO cancellation_events (customer_id, event_date, reason, outcome, note) VALUES (?, ?, ?, ?, ?)",
-                ev,
-            )
 
     # Recompute derived loyalty_score to incorporate any new columns.
     rows = conn.execute("SELECT * FROM loyalty").fetchall()
